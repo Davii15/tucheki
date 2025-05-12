@@ -1,67 +1,52 @@
-import { createClient as createSupabaseClient } from "@supabase/supabase-js"
-import type { cookies } from "next/headers"
+import { createClient } from "@supabase/supabase-js"
 import type { Database } from "./database.types"
 
-// Create a Supabase client for server components
-export function createClient(cookieStore?: ReturnType<typeof cookies>) {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-  const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-
-  if (!supabaseUrl || !supabaseKey) {
-    throw new Error("Missing Supabase environment variables. Please check your .env file.")
-  }
-
-  return createSupabaseClient<Database>(supabaseUrl, supabaseKey, {
-    auth: {
-      persistSession: false,
-      // If cookieStore is provided, use it to get cookies
-      ...(cookieStore && {
-        cookies: {
-          get(name: string) {
-            return cookieStore.get(name)?.value
-          },
-        },
-      }),
-    },
-  })
-}
-
-// Create a Supabase client for client components
+// Check if environment variables are defined
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 
-if (!supabaseUrl || !supabaseKey) {
-  throw new Error("Missing Supabase environment variables. Please check your .env file.")
+if (!supabaseUrl || !supabaseAnonKey) {
+  throw new Error("Supabase URL and Anon Key are required. Please check your environment variables.")
 }
 
-export const supabase = createSupabaseClient<Database>(supabaseUrl, supabaseKey)
+// Create a Supabase client for browser-side usage
+export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey)
+
+// Create a server-side client function (for server components and server actions)
+export const createSupabaseClient = () => {
+  return createClient<Database>(supabaseUrl, supabaseAnonKey)
+}
 
 // Database types based on our schema
-export type User = {
-  id: string
-  email: string
-  username: string
-  avatar_url?: string
-  role: string
-  created_at: string
-}
-
 export type Trailer = {
   id: string
   title: string
   description: string
   category: string
-  thumbnail: string
-  video_src: string
+  thumbnail_url: string
+  video_url: string
   director: string
-  cast: string[]
+  cast: string
   duration: string
   release_date: string
   created_at: string
   views: number
   likes: number
   comments: number
-  trending: boolean
+  featured: boolean
+}
+
+export type Ad = {
+  id: string
+  title: string
+  description: string
+  image_url: string
+  link_url: string
+  start_date: string
+  end_date: string
+  placement: string
+  active: boolean
+  created_at: string
 }
 
 export type Comment = {
@@ -70,8 +55,7 @@ export type Comment = {
   user_id: string
   content: string
   created_at: string
-  likes: number
-  user?: User
+  user_name: string
 }
 
 export type Like = {
@@ -84,15 +68,6 @@ export type Like = {
 export type View = {
   id: string
   trailer_id: string
-  user_id?: string
-  created_at: string
   session_id: string
-}
-
-export type Share = {
-  id: string
-  trailer_id: string
-  user_id?: string
-  platform: string
   created_at: string
 }
