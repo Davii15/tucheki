@@ -3,6 +3,7 @@
 import type React from "react"
 
 import { useState, useEffect } from "react"
+import { useRouter } from "next/navigation"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -12,21 +13,21 @@ import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { Skeleton } from "@/components/ui/skeleton"
-import { toast } from "@/components/ui/use-toast"
+import { useToast } from "@/components/ui/use-toast"
 import {
-  BarChart,
   Film,
-  Users,
   Eye,
-  ThumbsUp,
-  MessageSquare,
   Trash2,
   Edit,
   Calendar,
   Clock,
   Tag,
-  User,
   Award,
+  LogOut,
+  Plus,
+  Search,
+  Filter,
+  DollarSign,
 } from "lucide-react"
 import {
   getTrailers,
@@ -37,26 +38,9 @@ import {
   createAd,
   updateAd,
   deleteAd,
-  getTrailerAnalytics,
-  getUserAnalytics,
   uploadFile,
-} from "@/app/admin/actions"
-import {
-  Chart as ChartJS,
-  ArcElement,
-  Tooltip,
-  Legend,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  BarElement,
-  Title,
-} from "chart.js"
-import { Line, Bar } from "react-chartjs-2"
-
-// Register ChartJS components
-ChartJS.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, PointElement, LineElement, BarElement, Title)
+  adminLogout,
+} from "@/app/actions"
 
 // Types
 type Trailer = {
@@ -65,13 +49,16 @@ type Trailer = {
   description: string
   video_url: string
   thumbnail_url: string
-  genre: string
+  category: string
   release_date: string
   director: string
   cast: string
-  duration: number
+  duration: string
   featured: boolean
   created_at: string
+  views: number
+  likes: number
+  comments: number
 }
 
 type Ad = {
@@ -87,21 +74,6 @@ type Ad = {
   created_at: string
 }
 
-type TrailerAnalytics = {
-  id: string
-  title: string
-  views: number
-  likes: number
-  comments: number
-  engagement: number
-}
-
-type UserAnalytics = {
-  totalUsers: number
-  activeUsers: number
-  registrationTrend: { date: string; count: number }[]
-}
-
 export default function AdminDashboard() {
   // State for tabs
   const [activeTab, setActiveTab] = useState("overview")
@@ -109,8 +81,7 @@ export default function AdminDashboard() {
   // State for data
   const [trailers, setTrailers] = useState<Trailer[]>([])
   const [ads, setAds] = useState<Ad[]>([])
-  const [trailerAnalytics, setTrailerAnalytics] = useState<TrailerAnalytics[]>([])
-  const [userAnalytics, setUserAnalytics] = useState<UserAnalytics | null>(null)
+  const [searchQuery, setSearchQuery] = useState("")
 
   // State for loading
   const [isLoading, setIsLoading] = useState(true)
@@ -121,11 +92,11 @@ export default function AdminDashboard() {
     description: "",
     video_url: "",
     thumbnail_url: "",
-    genre: "",
+    category: "",
     release_date: "",
     director: "",
     cast: "",
-    duration: 0,
+    duration: "",
     featured: false,
   })
 
@@ -147,6 +118,9 @@ export default function AdminDashboard() {
   const [trailerThumbnailFile, setTrailerThumbnailFile] = useState<File | null>(null)
   const [adImageFile, setAdImageFile] = useState<File | null>(null)
 
+  const router = useRouter()
+  const { toast } = useToast()
+
   // Fetch data on component mount
   useEffect(() => {
     const fetchData = async () => {
@@ -154,20 +128,27 @@ export default function AdminDashboard() {
 
       try {
         // Fetch trailers
-        const { trailers: trailerData } = await getTrailers()
-        setTrailers(trailerData)
+        const { success: trailerSuccess, trailers: trailerData } = await getTrailers()
+        if (trailerSuccess) {
+          setTrailers(trailerData)
+        } else {
+          toast({
+            title: "Error",
+            description: "Failed to load trailers. Please try again.",
+            variant: "destructive",
+          })
+        }
 
         // Fetch ads
-        const { ads: adData } = await getAds()
-        setAds(adData)
-
-        // Fetch analytics
-        if (activeTab === "overview" || activeTab === "analytics") {
-          const { analytics: trailerAnalyticsData } = await getTrailerAnalytics()
-          setTrailerAnalytics(trailerAnalyticsData)
-
-          const { analytics: userAnalyticsData } = await getUserAnalytics()
-          setUserAnalytics(userAnalyticsData)
+        const { success: adSuccess, ads: adData } = await getAds()
+        if (adSuccess) {
+          setAds(adData)
+        } else {
+          toast({
+            title: "Error",
+            description: "Failed to load ads. Please try again.",
+            variant: "destructive",
+          })
         }
       } catch (error) {
         console.error("Error fetching admin data:", error)
@@ -182,7 +163,7 @@ export default function AdminDashboard() {
     }
 
     fetchData()
-  }, [activeTab])
+  }, [toast])
 
   // Handle trailer form submission
   const handleTrailerSubmit = async (e: React.FormEvent) => {
@@ -203,14 +184,21 @@ export default function AdminDashboard() {
         }
       }
 
-      const trailerData = {
-        ...newTrailer,
-        thumbnail_url: thumbnailUrl,
-      }
+      const formData = new FormData()
+      formData.append("title", newTrailer.title)
+      formData.append("description", newTrailer.description)
+      formData.append("video_url", newTrailer.video_url)
+      formData.append("thumbnail_url", thumbnailUrl)
+      formData.append("category", newTrailer.category)
+      formData.append("release_date", newTrailer.release_date)
+      formData.append("director", newTrailer.director)
+      formData.append("cast", newTrailer.cast)
+      formData.append("duration", newTrailer.duration)
+      formData.append("featured", newTrailer.featured ? "on" : "off")
 
       if (editingTrailerId) {
         // Update existing trailer
-        const { success } = await updateTrailer(editingTrailerId, trailerData)
+        const { success } = await updateTrailer(editingTrailerId, formData)
 
         if (success) {
           toast({
@@ -228,11 +216,11 @@ export default function AdminDashboard() {
             description: "",
             video_url: "",
             thumbnail_url: "",
-            genre: "",
+            category: "",
             release_date: "",
             director: "",
             cast: "",
-            duration: 0,
+            duration: "",
             featured: false,
           })
           setEditingTrailerId(null)
@@ -242,7 +230,7 @@ export default function AdminDashboard() {
         }
       } else {
         // Create new trailer
-        const { success } = await createTrailer(trailerData)
+        const { success } = await createTrailer(formData)
 
         if (success) {
           toast({
@@ -260,11 +248,11 @@ export default function AdminDashboard() {
             description: "",
             video_url: "",
             thumbnail_url: "",
-            genre: "",
+            category: "",
             release_date: "",
             director: "",
             cast: "",
-            duration: 0,
+            duration: "",
             featured: false,
           })
           setTrailerThumbnailFile(null)
@@ -301,14 +289,19 @@ export default function AdminDashboard() {
         }
       }
 
-      const adData = {
-        ...newAd,
-        image_url: imageUrl,
-      }
+      const formData = new FormData()
+      formData.append("title", newAd.title)
+      formData.append("description", newAd.description)
+      formData.append("image_url", imageUrl)
+      formData.append("link_url", newAd.link_url)
+      formData.append("start_date", newAd.start_date)
+      formData.append("end_date", newAd.end_date)
+      formData.append("placement", newAd.placement)
+      formData.append("active", newAd.active ? "on" : "off")
 
       if (editingAdId) {
         // Update existing ad
-        const { success } = await updateAd(editingAdId, adData)
+        const { success } = await updateAd(editingAdId, formData)
 
         if (success) {
           toast({
@@ -338,7 +331,7 @@ export default function AdminDashboard() {
         }
       } else {
         // Create new ad
-        const { success } = await createAd(adData)
+        const { success } = await createAd(formData)
 
         if (success) {
           toast({
@@ -382,13 +375,13 @@ export default function AdminDashboard() {
       title: trailer.title,
       description: trailer.description,
       video_url: trailer.video_url,
-      thumbnail_url: trailer.thumbnail_url,
-      genre: trailer.genre,
+      thumbnail_url: trailer.thumbnail_url || "",
+      category: trailer.category,
       release_date: trailer.release_date,
-      director: trailer.director,
-      cast: trailer.cast,
-      duration: trailer.duration,
-      featured: trailer.featured,
+      director: trailer.director || "",
+      cast: trailer.cast || "",
+      duration: trailer.duration || "",
+      featured: trailer.featured || false,
     })
     setEditingTrailerId(trailer.id)
     setActiveTab("trailers")
@@ -466,229 +459,148 @@ export default function AdminDashboard() {
     }
   }
 
-  // Prepare chart data
-  const prepareViewsChartData = () => {
-    if (!trailerAnalytics.length) return null
+  // Handle logout
+  const handleLogout = async () => {
+    try {
+      const { success } = await adminLogout()
 
-    const sortedData = [...trailerAnalytics].sort((a, b) => b.views - a.views).slice(0, 5)
-
-    return {
-      labels: sortedData.map((item) => item.title),
-      datasets: [
-        {
-          label: "Views",
-          data: sortedData.map((item) => item.views),
-          backgroundColor: [
-            "rgba(255, 99, 132, 0.6)",
-            "rgba(54, 162, 235, 0.6)",
-            "rgba(255, 206, 86, 0.6)",
-            "rgba(75, 192, 192, 0.6)",
-            "rgba(153, 102, 255, 0.6)",
-          ],
-          borderColor: [
-            "rgba(255, 99, 132, 1)",
-            "rgba(54, 162, 235, 1)",
-            "rgba(255, 206, 86, 1)",
-            "rgba(75, 192, 192, 1)",
-            "rgba(153, 102, 255, 1)",
-          ],
-          borderWidth: 1,
-        },
-      ],
+      if (success) {
+        toast({
+          title: "Logged out",
+          description: "You have been logged out successfully",
+        })
+        router.push("/admin/login")
+      } else {
+        throw new Error("Failed to logout")
+      }
+    } catch (error) {
+      console.error("Error logging out:", error)
+      toast({
+        title: "Error",
+        description: "Failed to logout. Please try again.",
+        variant: "destructive",
+      })
     }
   }
 
-  const prepareEngagementChartData = () => {
-    if (!trailerAnalytics.length) return null
+  // Filter trailers based on search query
+  const filteredTrailers = trailers.filter(
+    (trailer) =>
+      trailer.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      trailer.category.toLowerCase().includes(searchQuery.toLowerCase()),
+  )
 
-    const sortedData = [...trailerAnalytics].sort((a, b) => b.engagement - a.engagement).slice(0, 5)
-
-    return {
-      labels: sortedData.map((item) => item.title),
-      datasets: [
-        {
-          label: "Engagement Rate",
-          data: sortedData.map((item) => item.engagement.toFixed(2)),
-          backgroundColor: "rgba(75, 192, 192, 0.6)",
-          borderColor: "rgba(75, 192, 192, 1)",
-          borderWidth: 1,
-        },
-      ],
-    }
-  }
-
-  const prepareUserRegistrationChartData = () => {
-    if (!userAnalytics?.registrationTrend) return null
-
-    return {
-      labels: userAnalytics.registrationTrend.map((item) => item.date),
-      datasets: [
-        {
-          label: "New Users",
-          data: userAnalytics.registrationTrend.map((item) => item.count),
-          fill: false,
-          backgroundColor: "rgba(54, 162, 235, 0.6)",
-          borderColor: "rgba(54, 162, 235, 1)",
-          tension: 0.1,
-        },
-      ],
-    }
-  }
-
-  const viewsChartData = prepareViewsChartData()
-  const engagementChartData = prepareEngagementChartData()
-  const userRegistrationChartData = prepareUserRegistrationChartData()
+  // Filter ads based on search query
+  const filteredAds = ads.filter(
+    (ad) =>
+      ad.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      ad.placement.toLowerCase().includes(searchQuery.toLowerCase()),
+  )
 
   return (
-    <div className="container mx-auto py-6 space-y-8">
-      <div className="flex flex-col space-y-2">
-        <h1 className="text-3xl font-bold">Admin Dashboard</h1>
-        <p className="text-muted-foreground">Manage trailers, ads, and view analytics for Tucheki Streaming</p>
-      </div>
-
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid grid-cols-4 md:w-[600px] mb-8">
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="trailers">Trailers</TabsTrigger>
-          <TabsTrigger value="ads">Ads</TabsTrigger>
-          <TabsTrigger value="analytics">Analytics</TabsTrigger>
-        </TabsList>
-
-        {/* Overview Tab */}
-        <TabsContent value="overview" className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <CardTitle className="text-sm font-medium">Total Trailers</CardTitle>
-                <Film className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                {isLoading ? (
-                  <Skeleton className="h-8 w-20" />
-                ) : (
-                  <div className="text-2xl font-bold">{trailers.length}</div>
-                )}
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <CardTitle className="text-sm font-medium">Total Users</CardTitle>
-                <Users className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                {isLoading ? (
-                  <Skeleton className="h-8 w-20" />
-                ) : (
-                  <div className="text-2xl font-bold">{userAnalytics?.totalUsers || 0}</div>
-                )}
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <CardTitle className="text-sm font-medium">Active Users</CardTitle>
-                <User className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                {isLoading ? (
-                  <Skeleton className="h-8 w-20" />
-                ) : (
-                  <div className="text-2xl font-bold">{userAnalytics?.activeUsers || 0}</div>
-                )}
-              </CardContent>
-            </Card>
+    <div className="min-h-screen bg-gradient-to-b from-[#1A0F07] to-[#2A1A10] text-amber-100">
+      <header className="bg-amber-950/50 border-b border-amber-900/50 py-4">
+        <div className="container mx-auto px-4 flex justify-between items-center">
+          <div className="flex items-center space-x-2">
+            <Film className="h-6 w-6 text-amber-500" />
+            <h1 className="text-xl font-bold text-amber-400">Tucheki Admin</h1>
           </div>
+          <Button variant="ghost" className="text-amber-400 hover:bg-amber-900/30" onClick={handleLogout}>
+            <LogOut className="h-5 w-5 mr-2" />
+            Logout
+          </Button>
+        </div>
+      </header>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Top Trailers by Views</CardTitle>
-                <CardDescription>The most viewed trailers on the platform</CardDescription>
-              </CardHeader>
-              <CardContent>
-                {isLoading ? (
-                  <div className="space-y-2">
-                    <Skeleton className="h-4 w-full" />
-                    <Skeleton className="h-4 w-full" />
-                    <Skeleton className="h-4 w-full" />
-                    <Skeleton className="h-4 w-full" />
-                    <Skeleton className="h-4 w-full" />
-                  </div>
-                ) : viewsChartData ? (
-                  <div className="h-[300px]">
-                    <Bar
-                      data={viewsChartData}
-                      options={{
-                        maintainAspectRatio: false,
-                        plugins: {
-                          legend: {
-                            display: false,
-                          },
-                        },
-                      }}
-                    />
-                  </div>
-                ) : (
-                  <p className="text-center text-muted-foreground py-8">No data available</p>
-                )}
-              </CardContent>
-            </Card>
+      <div className="container mx-auto px-4 py-6">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
+          <TabsList className="bg-amber-950/50 border-amber-900/50">
+            <TabsTrigger
+              value="overview"
+              className="data-[state=active]:bg-amber-900/50 data-[state=active]:text-amber-300"
+            >
+              Overview
+            </TabsTrigger>
+            <TabsTrigger
+              value="trailers"
+              className="data-[state=active]:bg-amber-900/50 data-[state=active]:text-amber-300"
+            >
+              Trailers
+            </TabsTrigger>
+            <TabsTrigger value="ads" className="data-[state=active]:bg-amber-900/50 data-[state=active]:text-amber-300">
+              Ads
+            </TabsTrigger>
+          </TabsList>
 
-            <Card>
-              <CardHeader>
-                <CardTitle>User Registrations</CardTitle>
-                <CardDescription>New user registrations over the last 30 days</CardDescription>
-              </CardHeader>
-              <CardContent>
-                {isLoading ? (
-                  <div className="space-y-2">
-                    <Skeleton className="h-4 w-full" />
-                    <Skeleton className="h-4 w-full" />
-                    <Skeleton className="h-4 w-full" />
-                    <Skeleton className="h-4 w-full" />
-                    <Skeleton className="h-4 w-full" />
-                  </div>
-                ) : userRegistrationChartData ? (
-                  <div className="h-[300px]">
-                    <Line
-                      data={userRegistrationChartData}
-                      options={{
-                        maintainAspectRatio: false,
-                        plugins: {
-                          legend: {
-                            display: false,
-                          },
-                        },
-                      }}
-                    />
-                  </div>
-                ) : (
-                  <p className="text-center text-muted-foreground py-8">No data available</p>
-                )}
-              </CardContent>
-            </Card>
-          </div>
+          {/* Overview Tab */}
+          <TabsContent value="overview" className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <Card className="bg-amber-950/30 border-amber-900/50">
+                <CardHeader className="flex flex-row items-center justify-between pb-2">
+                  <CardTitle className="text-sm font-medium text-amber-300">Total Trailers</CardTitle>
+                  <Film className="h-4 w-4 text-amber-500" />
+                </CardHeader>
+                <CardContent>
+                  {isLoading ? (
+                    <Skeleton className="h-8 w-20 bg-amber-900/30" />
+                  ) : (
+                    <div className="text-2xl font-bold text-amber-100">{trailers.length}</div>
+                  )}
+                </CardContent>
+              </Card>
 
-          <div className="grid grid-cols-1 gap-6">
-            <Card>
+              <Card className="bg-amber-950/30 border-amber-900/50">
+                <CardHeader className="flex flex-row items-center justify-between pb-2">
+                  <CardTitle className="text-sm font-medium text-amber-300">Total Views</CardTitle>
+                  <Eye className="h-4 w-4 text-amber-500" />
+                </CardHeader>
+                <CardContent>
+                  {isLoading ? (
+                    <Skeleton className="h-8 w-20 bg-amber-900/30" />
+                  ) : (
+                    <div className="text-2xl font-bold text-amber-100">
+                      {trailers.reduce((sum, trailer) => sum + (trailer.views || 0), 0).toLocaleString()}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card className="bg-amber-950/30 border-amber-900/50">
+                <CardHeader className="flex flex-row items-center justify-between pb-2">
+                  <CardTitle className="text-sm font-medium text-amber-300">Active Ads</CardTitle>
+                  <DollarSign className="h-4 w-4 text-amber-500" />
+                </CardHeader>
+                <CardContent>
+                  {isLoading ? (
+                    <Skeleton className="h-8 w-20 bg-amber-900/30" />
+                  ) : (
+                    <div className="text-2xl font-bold text-amber-100">{ads.filter((ad) => ad.active).length}</div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+
+            <Card className="bg-amber-950/30 border-amber-900/50">
               <CardHeader>
-                <CardTitle>Recent Trailers</CardTitle>
-                <CardDescription>Recently added trailers</CardDescription>
+                <CardTitle className="text-amber-400">Recent Trailers</CardTitle>
+                <CardDescription className="text-amber-300/70">Recently added trailers</CardDescription>
               </CardHeader>
               <CardContent>
                 {isLoading ? (
                   <div className="space-y-4">
-                    <Skeleton className="h-12 w-full" />
-                    <Skeleton className="h-12 w-full" />
-                    <Skeleton className="h-12 w-full" />
+                    <Skeleton className="h-12 w-full bg-amber-900/30" />
+                    <Skeleton className="h-12 w-full bg-amber-900/30" />
+                    <Skeleton className="h-12 w-full bg-amber-900/30" />
                   </div>
                 ) : trailers.length > 0 ? (
                   <div className="space-y-4">
                     {trailers.slice(0, 5).map((trailer) => (
-                      <div key={trailer.id} className="flex items-center justify-between p-4 border rounded-md">
+                      <div
+                        key={trailer.id}
+                        className="flex items-center justify-between p-4 border border-amber-900/30 rounded-md bg-amber-950/20"
+                      >
                         <div className="flex items-center space-x-4">
-                          <div className="w-12 h-12 rounded-md overflow-hidden">
+                          <div className="w-12 h-12 rounded-md overflow-hidden bg-amber-900/20">
                             <img
                               src={trailer.thumbnail_url || "/placeholder.svg?height=48&width=48"}
                               alt={trailer.title}
@@ -696,15 +608,25 @@ export default function AdminDashboard() {
                             />
                           </div>
                           <div>
-                            <h4 className="font-medium">{trailer.title}</h4>
-                            <p className="text-sm text-muted-foreground">{trailer.genre}</p>
+                            <h4 className="font-medium text-amber-200">{trailer.title}</h4>
+                            <p className="text-sm text-amber-300/70">{trailer.category}</p>
                           </div>
                         </div>
                         <div className="flex items-center space-x-2">
-                          <Button variant="outline" size="icon" onClick={() => handleEditTrailer(trailer)}>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="text-amber-400 hover:bg-amber-900/30"
+                            onClick={() => handleEditTrailer(trailer)}
+                          >
                             <Edit className="h-4 w-4" />
                           </Button>
-                          <Button variant="outline" size="icon" onClick={() => handleDeleteTrailer(trailer.id)}>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="text-amber-400 hover:bg-amber-900/30"
+                            onClick={() => handleDeleteTrailer(trailer.id)}
+                          >
                             <Trash2 className="h-4 w-4" />
                           </Button>
                         </div>
@@ -712,651 +634,720 @@ export default function AdminDashboard() {
                     ))}
                   </div>
                 ) : (
-                  <p className="text-center text-muted-foreground py-8">No trailers available</p>
+                  <p className="text-center text-amber-300/70 py-8">No trailers available</p>
                 )}
               </CardContent>
             </Card>
-          </div>
-        </TabsContent>
 
-        {/* Trailers Tab */}
-        <TabsContent value="trailers" className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>{editingTrailerId ? "Edit Trailer" : "Add New Trailer"}</CardTitle>
-              <CardDescription>
-                {editingTrailerId ? "Update trailer information" : "Add a new trailer to the platform"}
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <form onSubmit={handleTrailerSubmit} className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="title">Title</Label>
-                    <Input
-                      id="title"
-                      value={newTrailer.title}
-                      onChange={(e) => setNewTrailer({ ...newTrailer, title: e.target.value })}
-                      required
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="genre">Genre</Label>
-                    <Select
-                      value={newTrailer.genre}
-                      onValueChange={(value) => setNewTrailer({ ...newTrailer, genre: value })}
-                      required
-                    >
-                      <SelectTrigger id="genre">
-                        <SelectValue placeholder="Select genre" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="action">Action</SelectItem>
-                        <SelectItem value="comedy">Comedy</SelectItem>
-                        <SelectItem value="drama">Drama</SelectItem>
-                        <SelectItem value="documentary">Documentary</SelectItem>
-                        <SelectItem value="thriller">Thriller</SelectItem>
-                        <SelectItem value="romance">Romance</SelectItem>
-                        <SelectItem value="horror">Horror</SelectItem>
-                        <SelectItem value="sci-fi">Sci-Fi</SelectItem>
-                        <SelectItem value="animation">Animation</SelectItem>
-                        <SelectItem value="adventure">Adventure</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="description">Description</Label>
-                  <Textarea
-                    id="description"
-                    value={newTrailer.description}
-                    onChange={(e) => setNewTrailer({ ...newTrailer, description: e.target.value })}
-                    rows={4}
-                    required
-                  />
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="video_url">Video URL</Label>
-                    <Input
-                      id="video_url"
-                      value={newTrailer.video_url}
-                      onChange={(e) => setNewTrailer({ ...newTrailer, video_url: e.target.value })}
-                      placeholder="YouTube or direct video URL"
-                      required
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="thumbnail_url">Thumbnail URL</Label>
-                    <Input
-                      id="thumbnail_url"
-                      value={newTrailer.thumbnail_url}
-                      onChange={(e) => setNewTrailer({ ...newTrailer, thumbnail_url: e.target.value })}
-                      placeholder="Leave empty to upload a file"
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="thumbnail_file">Upload Thumbnail</Label>
-                  <Input
-                    id="thumbnail_file"
-                    type="file"
-                    accept="image/*"
-                    onChange={(e) => {
-                      if (e.target.files && e.target.files[0]) {
-                        setTrailerThumbnailFile(e.target.files[0])
-                      }
-                    }}
-                  />
-                  {trailerThumbnailFile && (
-                    <p className="text-sm text-muted-foreground">Selected file: {trailerThumbnailFile.name}</p>
-                  )}
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="release_date">Release Date</Label>
-                    <Input
-                      id="release_date"
-                      type="date"
-                      value={newTrailer.release_date}
-                      onChange={(e) => setNewTrailer({ ...newTrailer, release_date: e.target.value })}
-                      required
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="director">Director</Label>
-                    <Input
-                      id="director"
-                      value={newTrailer.director}
-                      onChange={(e) => setNewTrailer({ ...newTrailer, director: e.target.value })}
-                      required
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="duration">Duration (seconds)</Label>
-                    <Input
-                      id="duration"
-                      type="number"
-                      value={newTrailer.duration}
-                      onChange={(e) => setNewTrailer({ ...newTrailer, duration: Number.parseInt(e.target.value) || 0 })}
-                      min="0"
-                      required
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="cast">Cast</Label>
-                  <Input
-                    id="cast"
-                    value={newTrailer.cast}
-                    onChange={(e) => setNewTrailer({ ...newTrailer, cast: e.target.value })}
-                    placeholder="Comma separated list of actors"
-                    required
-                  />
-                </div>
-
-                <div className="flex items-center space-x-2">
-                  <Switch
-                    id="featured"
-                    checked={newTrailer.featured}
-                    onCheckedChange={(checked) => setNewTrailer({ ...newTrailer, featured: checked })}
-                  />
-                  <Label htmlFor="featured">Featured Trailer</Label>
-                </div>
-
-                <div className="flex justify-end space-x-2">
-                  {editingTrailerId && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => {
-                        setNewTrailer({
-                          title: "",
-                          description: "",
-                          video_url: "",
-                          thumbnail_url: "",
-                          genre: "",
-                          release_date: "",
-                          director: "",
-                          cast: "",
-                          duration: 0,
-                          featured: false,
-                        })
-                        setEditingTrailerId(null)
-                        setTrailerThumbnailFile(null)
-                      }}
-                    >
-                      Cancel
-                    </Button>
-                  )}
-                  <Button type="submit">{editingTrailerId ? "Update Trailer" : "Add Trailer"}</Button>
-                </div>
-              </form>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Manage Trailers</CardTitle>
-              <CardDescription>View and manage all trailers</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {isLoading ? (
-                <div className="space-y-4">
-                  <Skeleton className="h-12 w-full" />
-                  <Skeleton className="h-12 w-full" />
-                  <Skeleton className="h-12 w-full" />
-                  <Skeleton className="h-12 w-full" />
-                  <Skeleton className="h-12 w-full" />
-                </div>
-              ) : trailers.length > 0 ? (
-                <div className="space-y-4">
-                  {trailers.map((trailer) => (
-                    <div key={trailer.id} className="flex items-center justify-between p-4 border rounded-md">
-                      <div className="flex items-center space-x-4">
-                        <div className="w-16 h-9 rounded-md overflow-hidden">
-                          <img
-                            src={trailer.thumbnail_url || "/placeholder.svg?height=36&width=64"}
-                            alt={trailer.title}
-                            className="w-full h-full object-cover"
-                          />
-                        </div>
-                        <div>
-                          <h4 className="font-medium">{trailer.title}</h4>
-                          <div className="flex items-center space-x-4 text-sm text-muted-foreground">
-                            <span className="flex items-center">
-                              <Tag className="h-3 w-3 mr-1" />
-                              {trailer.genre}
-                            </span>
-                            <span className="flex items-center">
-                              <Calendar className="h-3 w-3 mr-1" />
-                              {new Date(trailer.release_date).toLocaleDateString()}
-                            </span>
-                            <span className="flex items-center">
-                              <Clock className="h-3 w-3 mr-1" />
-                              {Math.floor(trailer.duration / 60)}:{(trailer.duration % 60).toString().padStart(2, "0")}
-                            </span>
-                            {trailer.featured && (
-                              <span className="flex items-center text-yellow-500">
-                                <Award className="h-3 w-3 mr-1" />
-                                Featured
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex items-center space-x-2">
-                        <Button variant="outline" size="sm" onClick={() => handleEditTrailer(trailer)}>
-                          <Edit className="h-4 w-4 mr-1" />
-                          Edit
-                        </Button>
-                        <Button variant="outline" size="sm" onClick={() => handleDeleteTrailer(trailer.id)}>
-                          <Trash2 className="h-4 w-4 mr-1" />
-                          Delete
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-center text-muted-foreground py-8">No trailers available</p>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* Ads Tab */}
-        <TabsContent value="ads" className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>{editingAdId ? "Edit Ad" : "Add New Ad"}</CardTitle>
-              <CardDescription>
-                {editingAdId ? "Update ad information" : "Add a new advertisement to the platform"}
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <form onSubmit={handleAdSubmit} className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="ad_title">Title</Label>
-                    <Input
-                      id="ad_title"
-                      value={newAd.title}
-                      onChange={(e) => setNewAd({ ...newAd, title: e.target.value })}
-                      required
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="ad_placement">Placement</Label>
-                    <Select
-                      value={newAd.placement}
-                      onValueChange={(value) => setNewAd({ ...newAd, placement: value })}
-                      required
-                    >
-                      <SelectTrigger id="ad_placement">
-                        <SelectValue placeholder="Select placement" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="home">Home Page</SelectItem>
-                        <SelectItem value="trailers">Trailers Page</SelectItem>
-                        <SelectItem value="sidebar">Sidebar</SelectItem>
-                        <SelectItem value="player">Video Player</SelectItem>
-                        <SelectItem value="search">Search Results</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="ad_description">Description</Label>
-                  <Textarea
-                    id="ad_description"
-                    value={newAd.description}
-                    onChange={(e) => setNewAd({ ...newAd, description: e.target.value })}
-                    rows={3}
-                    required
-                  />
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="ad_image_url">Image URL</Label>
-                    <Input
-                      id="ad_image_url"
-                      value={newAd.image_url}
-                      onChange={(e) => setNewAd({ ...newAd, image_url: e.target.value })}
-                      placeholder="Leave empty to upload a file"
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="ad_link_url">Link URL</Label>
-                    <Input
-                      id="ad_link_url"
-                      value={newAd.link_url}
-                      onChange={(e) => setNewAd({ ...newAd, link_url: e.target.value })}
-                      required
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="ad_image_file">Upload Image</Label>
-                  <Input
-                    id="ad_image_file"
-                    type="file"
-                    accept="image/*"
-                    onChange={(e) => {
-                      if (e.target.files && e.target.files[0]) {
-                        setAdImageFile(e.target.files[0])
-                      }
-                    }}
-                  />
-                  {adImageFile && <p className="text-sm text-muted-foreground">Selected file: {adImageFile.name}</p>}
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="ad_start_date">Start Date</Label>
-                    <Input
-                      id="ad_start_date"
-                      type="date"
-                      value={newAd.start_date}
-                      onChange={(e) => setNewAd({ ...newAd, start_date: e.target.value })}
-                      required
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="ad_end_date">End Date</Label>
-                    <Input
-                      id="ad_end_date"
-                      type="date"
-                      value={newAd.end_date}
-                      onChange={(e) => setNewAd({ ...newAd, end_date: e.target.value })}
-                      required
-                    />
-                  </div>
-                </div>
-
-                <div className="flex items-center space-x-2">
-                  <Switch
-                    id="ad_active"
-                    checked={newAd.active}
-                    onCheckedChange={(checked) => setNewAd({ ...newAd, active: checked })}
-                  />
-                  <Label htmlFor="ad_active">Active</Label>
-                </div>
-
-                <div className="flex justify-end space-x-2">
-                  {editingAdId && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => {
-                        setNewAd({
-                          title: "",
-                          description: "",
-                          image_url: "",
-                          link_url: "",
-                          start_date: "",
-                          end_date: "",
-                          placement: "home",
-                          active: true,
-                        })
-                        setEditingAdId(null)
-                        setAdImageFile(null)
-                      }}
-                    >
-                      Cancel
-                    </Button>
-                  )}
-                  <Button type="submit">{editingAdId ? "Update Ad" : "Add Ad"}</Button>
-                </div>
-              </form>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Manage Ads</CardTitle>
-              <CardDescription>View and manage all advertisements</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {isLoading ? (
-                <div className="space-y-4">
-                  <Skeleton className="h-12 w-full" />
-                  <Skeleton className="h-12 w-full" />
-                  <Skeleton className="h-12 w-full" />
-                </div>
-              ) : ads.length > 0 ? (
-                <div className="space-y-4">
-                  {ads.map((ad) => (
-                    <div key={ad.id} className="flex items-center justify-between p-4 border rounded-md">
-                      <div className="flex items-center space-x-4">
-                        <div className="w-16 h-9 rounded-md overflow-hidden">
-                          <img
-                            src={ad.image_url || "/placeholder.svg?height=36&width=64"}
-                            alt={ad.title}
-                            className="w-full h-full object-cover"
-                          />
-                        </div>
-                        <div>
-                          <h4 className="font-medium">{ad.title}</h4>
-                          <div className="flex items-center space-x-4 text-sm text-muted-foreground">
-                            <span>{ad.placement}</span>
-                            <span>
-                              {new Date(ad.start_date).toLocaleDateString()} -{" "}
-                              {new Date(ad.end_date).toLocaleDateString()}
-                            </span>
-                            <span className={ad.active ? "text-green-500" : "text-red-500"}>
-                              {ad.active ? "Active" : "Inactive"}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex items-center space-x-2">
-                        <Button variant="outline" size="sm" onClick={() => handleEditAd(ad)}>
-                          <Edit className="h-4 w-4 mr-1" />
-                          Edit
-                        </Button>
-                        <Button variant="outline" size="sm" onClick={() => handleDeleteAd(ad.id)}>
-                          <Trash2 className="h-4 w-4 mr-1" />
-                          Delete
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-center text-muted-foreground py-8">No ads available</p>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* Analytics Tab */}
-        <TabsContent value="analytics" className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <Card>
+            <Card className="bg-amber-950/30 border-amber-900/50">
               <CardHeader>
-                <CardTitle>Top Trailers by Views</CardTitle>
-                <CardDescription>The most viewed trailers on the platform</CardDescription>
+                <CardTitle className="text-amber-400">Active Ads</CardTitle>
+                <CardDescription className="text-amber-300/70">Currently active advertisements</CardDescription>
               </CardHeader>
               <CardContent>
                 {isLoading ? (
-                  <div className="space-y-2">
-                    <Skeleton className="h-4 w-full" />
-                    <Skeleton className="h-4 w-full" />
-                    <Skeleton className="h-4 w-full" />
-                    <Skeleton className="h-4 w-full" />
-                    <Skeleton className="h-4 w-full" />
+                  <div className="space-y-4">
+                    <Skeleton className="h-12 w-full bg-amber-900/30" />
+                    <Skeleton className="h-12 w-full bg-amber-900/30" />
                   </div>
-                ) : viewsChartData ? (
-                  <div className="h-[300px]">
-                    <Bar
-                      data={viewsChartData}
-                      options={{
-                        maintainAspectRatio: false,
-                        plugins: {
-                          legend: {
-                            display: false,
-                          },
-                        },
-                      }}
-                    />
-                  </div>
-                ) : (
-                  <p className="text-center text-muted-foreground py-8">No data available</p>
-                )}
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Top Trailers by Engagement</CardTitle>
-                <CardDescription>Trailers with highest engagement rate (likes + comments / views)</CardDescription>
-              </CardHeader>
-              <CardContent>
-                {isLoading ? (
-                  <div className="space-y-2">
-                    <Skeleton className="h-4 w-full" />
-                    <Skeleton className="h-4 w-full" />
-                    <Skeleton className="h-4 w-full" />
-                    <Skeleton className="h-4 w-full" />
-                    <Skeleton className="h-4 w-full" />
-                  </div>
-                ) : engagementChartData ? (
-                  <div className="h-[300px]">
-                    <Bar
-                      data={engagementChartData}
-                      options={{
-                        maintainAspectRatio: false,
-                        plugins: {
-                          legend: {
-                            display: false,
-                          },
-                        },
-                      }}
-                    />
-                  </div>
-                ) : (
-                  <p className="text-center text-muted-foreground py-8">No data available</p>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>User Registrations</CardTitle>
-              <CardDescription>New user registrations over the last 30 days</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {isLoading ? (
-                <div className="space-y-2">
-                  <Skeleton className="h-4 w-full" />
-                  <Skeleton className="h-4 w-full" />
-                  <Skeleton className="h-4 w-full" />
-                  <Skeleton className="h-4 w-full" />
-                  <Skeleton className="h-4 w-full" />
-                </div>
-              ) : userRegistrationChartData ? (
-                <div className="h-[300px]">
-                  <Line
-                    data={userRegistrationChartData}
-                    options={{
-                      maintainAspectRatio: false,
-                      plugins: {
-                        legend: {
-                          display: false,
-                        },
-                      },
-                    }}
-                  />
-                </div>
-              ) : (
-                <p className="text-center text-muted-foreground py-8">No data available</p>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Trailer Performance</CardTitle>
-              <CardDescription>Detailed performance metrics for all trailers</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {isLoading ? (
-                <div className="space-y-2">
-                  <Skeleton className="h-4 w-full" />
-                  <Skeleton className="h-4 w-full" />
-                  <Skeleton className="h-4 w-full" />
-                  <Skeleton className="h-4 w-full" />
-                  <Skeleton className="h-4 w-full" />
-                </div>
-              ) : trailerAnalytics.length > 0 ? (
-                <div className="overflow-x-auto">
-                  <table className="w-full">
-                    <thead>
-                      <tr className="border-b">
-                        <th className="text-left py-3 px-4">Title</th>
-                        <th className="text-center py-3 px-4">
-                          <div className="flex items-center justify-center">
-                            <Eye className="h-4 w-4 mr-1" />
-                            Views
+                ) : ads.filter((ad) => ad.active).length > 0 ? (
+                  <div className="space-y-4">
+                    {ads
+                      .filter((ad) => ad.active)
+                      .slice(0, 3)
+                      .map((ad) => (
+                        <div
+                          key={ad.id}
+                          className="flex items-center justify-between p-4 border border-amber-900/30 rounded-md bg-amber-950/20"
+                        >
+                          <div className="flex items-center space-x-4">
+                            <div className="w-12 h-12 rounded-md overflow-hidden bg-amber-900/20">
+                              <img
+                                src={ad.image_url || "/placeholder.svg?height=48&width=48"}
+                                alt={ad.title}
+                                className="w-full h-full object-cover"
+                              />
+                            </div>
+                            <div>
+                              <h4 className="font-medium text-amber-200">{ad.title}</h4>
+                              <p className="text-sm text-amber-300/70">{ad.placement}</p>
+                            </div>
                           </div>
-                        </th>
-                        <th className="text-center py-3 px-4">
-                          <div className="flex items-center justify-center">
-                            <ThumbsUp className="h-4 w-4 mr-1" />
-                            Likes
+                          <div className="flex items-center space-x-2">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="text-amber-400 hover:bg-amber-900/30"
+                              onClick={() => handleEditAd(ad)}
+                            >
+                              <Edit className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="text-amber-400 hover:bg-amber-900/30"
+                              onClick={() => handleDeleteAd(ad.id)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
                           </div>
-                        </th>
-                        <th className="text-center py-3 px-4">
-                          <div className="flex items-center justify-center">
-                            <MessageSquare className="h-4 w-4 mr-1" />
-                            Comments
-                          </div>
-                        </th>
-                        <th className="text-center py-3 px-4">
-                          <div className="flex items-center justify-center">
-                            <BarChart className="h-4 w-4 mr-1" />
-                            Engagement
-                          </div>
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {trailerAnalytics.map((trailer) => (
-                        <tr key={trailer.id} className="border-b">
-                          <td className="py-3 px-4">{trailer.title}</td>
-                          <td className="text-center py-3 px-4">{trailer.views}</td>
-                          <td className="text-center py-3 px-4">{trailer.likes}</td>
-                          <td className="text-center py-3 px-4">{trailer.comments}</td>
-                          <td className="text-center py-3 px-4">{trailer.engagement.toFixed(2)}</td>
-                        </tr>
+                        </div>
                       ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <p className="text-center text-muted-foreground py-8">No data available</p>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
+                  </div>
+                ) : (
+                  <p className="text-center text-amber-300/70 py-8">No active ads available</p>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Trailers Tab */}
+          <TabsContent value="trailers" className="space-y-6">
+            <div className="flex justify-between items-center">
+              <h2 className="text-2xl font-bold text-amber-400">Manage Trailers</h2>
+              <Button
+                className="bg-amber-600 hover:bg-amber-700 text-white"
+                onClick={() => {
+                  setNewTrailer({
+                    title: "",
+                    description: "",
+                    video_url: "",
+                    thumbnail_url: "",
+                    category: "",
+                    release_date: "",
+                    director: "",
+                    cast: "",
+                    duration: "",
+                    featured: false,
+                  })
+                  setEditingTrailerId(null)
+                  setTrailerThumbnailFile(null)
+                  document.getElementById("trailerForm")?.scrollIntoView({ behavior: "smooth" })
+                }}
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                Add New Trailer
+              </Button>
+            </div>
+
+            <div className="mb-6 flex gap-4">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-amber-500 h-5 w-5" />
+                <Input
+                  placeholder="Search trailers..."
+                  className="pl-10 bg-amber-950/50 border-amber-800/50 text-amber-100 placeholder:text-amber-400/50"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+              </div>
+              <Button variant="outline" className="border-amber-700/50 text-amber-400 hover:bg-amber-900/30">
+                <Filter className="h-4 w-4 mr-2" />
+                Filter
+              </Button>
+            </div>
+
+            <Card className="bg-amber-950/30 border-amber-900/50" id="trailerForm">
+              <CardHeader>
+                <CardTitle className="text-amber-400">
+                  {editingTrailerId ? "Edit Trailer" : "Add New Trailer"}
+                </CardTitle>
+                <CardDescription className="text-amber-300/70">
+                  {editingTrailerId ? "Update trailer information" : "Add a new trailer to the platform"}
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <form onSubmit={handleTrailerSubmit} className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="title" className="text-amber-300">
+                        Title
+                      </Label>
+                      <Input
+                        id="title"
+                        value={newTrailer.title}
+                        onChange={(e) => setNewTrailer({ ...newTrailer, title: e.target.value })}
+                        className="bg-amber-950/50 border-amber-800/50 text-amber-100"
+                        required
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="category" className="text-amber-300">
+                        Category
+                      </Label>
+                      <Select
+                        value={newTrailer.category}
+                        onValueChange={(value) => setNewTrailer({ ...newTrailer, category: value })}
+                        required
+                      >
+                        <SelectTrigger id="category" className="bg-amber-950/50 border-amber-800/50 text-amber-100">
+                          <SelectValue placeholder="Select category" />
+                        </SelectTrigger>
+                        <SelectContent className="bg-amber-950 border-amber-900/50">
+                          <SelectItem value="action">Action</SelectItem>
+                          <SelectItem value="comedy">Comedy</SelectItem>
+                          <SelectItem value="drama">Drama</SelectItem>
+                          <SelectItem value="documentary">Documentary</SelectItem>
+                          <SelectItem value="thriller">Thriller</SelectItem>
+                          <SelectItem value="romance">Romance</SelectItem>
+                          <SelectItem value="horror">Horror</SelectItem>
+                          <SelectItem value="sci-fi">Sci-Fi</SelectItem>
+                          <SelectItem value="animation">Animation</SelectItem>
+                          <SelectItem value="adventure">Adventure</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="description" className="text-amber-300">
+                      Description
+                    </Label>
+                    <Textarea
+                      id="description"
+                      value={newTrailer.description}
+                      onChange={(e) => setNewTrailer({ ...newTrailer, description: e.target.value })}
+                      rows={4}
+                      className="bg-amber-950/50 border-amber-800/50 text-amber-100"
+                      required
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="video_url" className="text-amber-300">
+                        Video URL
+                      </Label>
+                      <Input
+                        id="video_url"
+                        value={newTrailer.video_url}
+                        onChange={(e) => setNewTrailer({ ...newTrailer, video_url: e.target.value })}
+                        placeholder="YouTube or direct video URL"
+                        className="bg-amber-950/50 border-amber-800/50 text-amber-100 placeholder:text-amber-400/50"
+                        required
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="thumbnail_url" className="text-amber-300">
+                        Thumbnail URL
+                      </Label>
+                      <Input
+                        id="thumbnail_url"
+                        value={newTrailer.thumbnail_url}
+                        onChange={(e) => setNewTrailer({ ...newTrailer, thumbnail_url: e.target.value })}
+                        placeholder="Leave empty to upload a file"
+                        className="bg-amber-950/50 border-amber-800/50 text-amber-100 placeholder:text-amber-400/50"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="thumbnail_file" className="text-amber-300">
+                      Upload Thumbnail
+                    </Label>
+                    <Input
+                      id="thumbnail_file"
+                      type="file"
+                      accept="image/*"
+                      className="bg-amber-950/50 border-amber-800/50 text-amber-100"
+                      onChange={(e) => {
+                        if (e.target.files && e.target.files[0]) {
+                          setTrailerThumbnailFile(e.target.files[0])
+                        }
+                      }}
+                    />
+                    {trailerThumbnailFile && (
+                      <p className="text-sm text-amber-300/70">Selected file: {trailerThumbnailFile.name}</p>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="release_date" className="text-amber-300">
+                        Release Date
+                      </Label>
+                      <Input
+                        id="release_date"
+                        type="date"
+                        value={newTrailer.release_date}
+                        onChange={(e) => setNewTrailer({ ...newTrailer, release_date: e.target.value })}
+                        className="bg-amber-950/50 border-amber-800/50 text-amber-100"
+                        required
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="director" className="text-amber-300">
+                        Director
+                      </Label>
+                      <Input
+                        id="director"
+                        value={newTrailer.director}
+                        onChange={(e) => setNewTrailer({ ...newTrailer, director: e.target.value })}
+                        className="bg-amber-950/50 border-amber-800/50 text-amber-100"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="duration" className="text-amber-300">
+                        Duration
+                      </Label>
+                      <Input
+                        id="duration"
+                        value={newTrailer.duration}
+                        onChange={(e) => setNewTrailer({ ...newTrailer, duration: e.target.value })}
+                        placeholder="e.g. 2:30"
+                        className="bg-amber-950/50 border-amber-800/50 text-amber-100 placeholder:text-amber-400/50"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="cast" className="text-amber-300">
+                      Cast
+                    </Label>
+                    <Input
+                      id="cast"
+                      value={newTrailer.cast}
+                      onChange={(e) => setNewTrailer({ ...newTrailer, cast: e.target.value })}
+                      placeholder="Comma separated list of actors"
+                      className="bg-amber-950/50 border-amber-800/50 text-amber-100 placeholder:text-amber-400/50"
+                    />
+                  </div>
+
+                  <div className="flex items-center space-x-2">
+                    <Switch
+                      id="featured"
+                      checked={newTrailer.featured}
+                      onCheckedChange={(checked) => setNewTrailer({ ...newTrailer, featured: checked })}
+                    />
+                    <Label htmlFor="featured" className="text-amber-300">
+                      Featured Trailer
+                    </Label>
+                  </div>
+
+                  <div className="flex justify-end space-x-2">
+                    {editingTrailerId && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="border-amber-700/50 text-amber-400 hover:bg-amber-900/30"
+                        onClick={() => {
+                          setNewTrailer({
+                            title: "",
+                            description: "",
+                            video_url: "",
+                            thumbnail_url: "",
+                            category: "",
+                            release_date: "",
+                            director: "",
+                            cast: "",
+                            duration: "",
+                            featured: false,
+                          })
+                          setEditingTrailerId(null)
+                          setTrailerThumbnailFile(null)
+                        }}
+                      >
+                        Cancel
+                      </Button>
+                    )}
+                    <Button type="submit" className="bg-amber-600 hover:bg-amber-700 text-white">
+                      {editingTrailerId ? "Update Trailer" : "Add Trailer"}
+                    </Button>
+                  </div>
+                </form>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-amber-950/30 border-amber-900/50">
+              <CardHeader>
+                <CardTitle className="text-amber-400">All Trailers</CardTitle>
+                <CardDescription className="text-amber-300/70">
+                  {filteredTrailers.length} trailers found
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {isLoading ? (
+                  <div className="space-y-4">
+                    <Skeleton className="h-12 w-full bg-amber-900/30" />
+                    <Skeleton className="h-12 w-full bg-amber-900/30" />
+                    <Skeleton className="h-12 w-full bg-amber-900/30" />
+                    <Skeleton className="h-12 w-full bg-amber-900/30" />
+                    <Skeleton className="h-12 w-full bg-amber-900/30" />
+                  </div>
+                ) : filteredTrailers.length > 0 ? (
+                  <div className="space-y-4">
+                    {filteredTrailers.map((trailer) => (
+                      <div
+                        key={trailer.id}
+                        className="flex items-center justify-between p-4 border border-amber-900/30 rounded-md bg-amber-950/20"
+                      >
+                        <div className="flex items-center space-x-4">
+                          <div className="w-16 h-9 rounded-md overflow-hidden bg-amber-900/20">
+                            <img
+                              src={trailer.thumbnail_url || "/placeholder.svg?height=36&width=64"}
+                              alt={trailer.title}
+                              className="w-full h-full object-cover"
+                            />
+                          </div>
+                          <div>
+                            <h4 className="font-medium text-amber-200">{trailer.title}</h4>
+                            <div className="flex items-center space-x-4 text-sm text-amber-300/70">
+                              <span className="flex items-center">
+                                <Tag className="h-3 w-3 mr-1" />
+                                {trailer.category}
+                              </span>
+                              <span className="flex items-center">
+                                <Calendar className="h-3 w-3 mr-1" />
+                                {new Date(trailer.release_date).toLocaleDateString()}
+                              </span>
+                              <span className="flex items-center">
+                                <Clock className="h-3 w-3 mr-1" />
+                                {trailer.duration}
+                              </span>
+                              <span className="flex items-center">
+                                <Eye className="h-3 w-3 mr-1" />
+                                {trailer.views || 0}
+                              </span>
+                              {trailer.featured && (
+                                <span className="flex items-center text-amber-500">
+                                  <Award className="h-3 w-3 mr-1" />
+                                  Featured
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="border-amber-700/50 text-amber-400 hover:bg-amber-900/30"
+                            onClick={() => handleEditTrailer(trailer)}
+                          >
+                            <Edit className="h-4 w-4 mr-1" />
+                            Edit
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="border-amber-700/50 text-amber-400 hover:bg-amber-900/30"
+                            onClick={() => handleDeleteTrailer(trailer.id)}
+                          >
+                            <Trash2 className="h-4 w-4 mr-1" />
+                            Delete
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-center text-amber-300/70 py-8">
+                    {searchQuery ? `No trailers found matching "${searchQuery}"` : "No trailers available"}
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Ads Tab */}
+          <TabsContent value="ads" className="space-y-6">
+            <div className="flex justify-between items-center">
+              <h2 className="text-2xl font-bold text-amber-400">Manage Ads</h2>
+              <Button
+                className="bg-amber-600 hover:bg-amber-700 text-white"
+                onClick={() => {
+                  setNewAd({
+                    title: "",
+                    description: "",
+                    image_url: "",
+                    link_url: "",
+                    start_date: "",
+                    end_date: "",
+                    placement: "home",
+                    active: true,
+                  })
+                  setEditingAdId(null)
+                  setAdImageFile(null)
+                  document.getElementById("adForm")?.scrollIntoView({ behavior: "smooth" })
+                }}
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                Add New Ad
+              </Button>
+            </div>
+
+            <div className="mb-6 flex gap-4">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-amber-500 h-5 w-5" />
+                <Input
+                  placeholder="Search ads..."
+                  className="pl-10 bg-amber-950/50 border-amber-800/50 text-amber-100 placeholder:text-amber-400/50"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+              </div>
+              <Button variant="outline" className="border-amber-700/50 text-amber-400 hover:bg-amber-900/30">
+                <Filter className="h-4 w-4 mr-2" />
+                Filter
+              </Button>
+            </div>
+
+            <Card className="bg-amber-950/30 border-amber-900/50" id="adForm">
+              <CardHeader>
+                <CardTitle className="text-amber-400">{editingAdId ? "Edit Ad" : "Add New Ad"}</CardTitle>
+                <CardDescription className="text-amber-300/70">
+                  {editingAdId ? "Update ad information" : "Add a new advertisement to the platform"}
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <form onSubmit={handleAdSubmit} className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="ad_title" className="text-amber-300">
+                        Title
+                      </Label>
+                      <Input
+                        id="ad_title"
+                        value={newAd.title}
+                        onChange={(e) => setNewAd({ ...newAd, title: e.target.value })}
+                        className="bg-amber-950/50 border-amber-800/50 text-amber-100"
+                        required
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="ad_placement" className="text-amber-300">
+                        Placement
+                      </Label>
+                      <Select
+                        value={newAd.placement}
+                        onValueChange={(value) => setNewAd({ ...newAd, placement: value })}
+                        required
+                      >
+                        <SelectTrigger id="ad_placement" className="bg-amber-950/50 border-amber-800/50 text-amber-100">
+                          <SelectValue placeholder="Select placement" />
+                        </SelectTrigger>
+                        <SelectContent className="bg-amber-950 border-amber-900/50">
+                          <SelectItem value="home">Home Page</SelectItem>
+                          <SelectItem value="trailers">Trailers Page</SelectItem>
+                          <SelectItem value="sidebar">Sidebar</SelectItem>
+                          <SelectItem value="player">Video Player</SelectItem>
+                          <SelectItem value="banner">Banner</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="ad_description" className="text-amber-300">
+                      Description
+                    </Label>
+                    <Textarea
+                      id="ad_description"
+                      value={newAd.description}
+                      onChange={(e) => setNewAd({ ...newAd, description: e.target.value })}
+                      rows={3}
+                      className="bg-amber-950/50 border-amber-800/50 text-amber-100"
+                      required
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="ad_image_url" className="text-amber-300">
+                        Image URL
+                      </Label>
+                      <Input
+                        id="ad_image_url"
+                        value={newAd.image_url}
+                        onChange={(e) => setNewAd({ ...newAd, image_url: e.target.value })}
+                        placeholder="Leave empty to upload a file"
+                        className="bg-amber-950/50 border-amber-800/50 text-amber-100 placeholder:text-amber-400/50"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="ad_link_url" className="text-amber-300">
+                        Link URL
+                      </Label>
+                      <Input
+                        id="ad_link_url"
+                        value={newAd.link_url}
+                        onChange={(e) => setNewAd({ ...newAd, link_url: e.target.value })}
+                        className="bg-amber-950/50 border-amber-800/50 text-amber-100"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="ad_image_file" className="text-amber-300">
+                      Upload Image
+                    </Label>
+                    <Input
+                      id="ad_image_file"
+                      type="file"
+                      accept="image/*"
+                      className="bg-amber-950/50 border-amber-800/50 text-amber-100"
+                      onChange={(e) => {
+                        if (e.target.files && e.target.files[0]) {
+                          setAdImageFile(e.target.files[0])
+                        }
+                      }}
+                    />
+                    {adImageFile && <p className="text-sm text-amber-300/70">Selected file: {adImageFile.name}</p>}
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="ad_start_date" className="text-amber-300">
+                        Start Date
+                      </Label>
+                      <Input
+                        id="ad_start_date"
+                        type="date"
+                        value={newAd.start_date}
+                        onChange={(e) => setNewAd({ ...newAd, start_date: e.target.value })}
+                        className="bg-amber-950/50 border-amber-800/50 text-amber-100"
+                        required
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="ad_end_date" className="text-amber-300">
+                        End Date
+                      </Label>
+                      <Input
+                        id="ad_end_date"
+                        type="date"
+                        value={newAd.end_date}
+                        onChange={(e) => setNewAd({ ...newAd, end_date: e.target.value })}
+                        className="bg-amber-950/50 border-amber-800/50 text-amber-100"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex items-center space-x-2">
+                    <Switch
+                      id="ad_active"
+                      checked={newAd.active}
+                      onCheckedChange={(checked) => setNewAd({ ...newAd, active: checked })}
+                    />
+                    <Label htmlFor="ad_active" className="text-amber-300">
+                      Active
+                    </Label>
+                  </div>
+
+                  <div className="flex justify-end space-x-2">
+                    {editingAdId && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="border-amber-700/50 text-amber-400 hover:bg-amber-900/30"
+                        onClick={() => {
+                          setNewAd({
+                            title: "",
+                            description: "",
+                            image_url: "",
+                            link_url: "",
+                            start_date: "",
+                            end_date: "",
+                            placement: "home",
+                            active: true,
+                          })
+                          setEditingAdId(null)
+                          setAdImageFile(null)
+                        }}
+                      >
+                        Cancel
+                      </Button>
+                    )}
+                    <Button type="submit" className="bg-amber-600 hover:bg-amber-700 text-white">
+                      {editingAdId ? "Update Ad" : "Add Ad"}
+                    </Button>
+                  </div>
+                </form>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-amber-950/30 border-amber-900/50">
+              <CardHeader>
+                <CardTitle className="text-amber-400">All Ads</CardTitle>
+                <CardDescription className="text-amber-300/70">{filteredAds.length} ads found</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {isLoading ? (
+                  <div className="space-y-4">
+                    <Skeleton className="h-12 w-full bg-amber-900/30" />
+                    <Skeleton className="h-12 w-full bg-amber-900/30" />
+                    <Skeleton className="h-12 w-full bg-amber-900/30" />
+                  </div>
+                ) : filteredAds.length > 0 ? (
+                  <div className="space-y-4">
+                    {filteredAds.map((ad) => (
+                      <div
+                        key={ad.id}
+                        className="flex items-center justify-between p-4 border border-amber-900/30 rounded-md bg-amber-950/20"
+                      >
+                        <div className="flex items-center space-x-4">
+                          <div className="w-16 h-9 rounded-md overflow-hidden bg-amber-900/20">
+                            <img
+                              src={ad.image_url || "/placeholder.svg?height=36&width=64"}
+                              alt={ad.title}
+                              className="w-full h-full object-cover"
+                            />
+                          </div>
+                          <div>
+                            <h4 className="font-medium text-amber-200">{ad.title}</h4>
+                            <div className="flex items-center space-x-4 text-sm text-amber-300/70">
+                              <span>{ad.placement}</span>
+                              <span>
+                                {new Date(ad.start_date).toLocaleDateString()} -{" "}
+                                {new Date(ad.end_date).toLocaleDateString()}
+                              </span>
+                              <span className={ad.active ? "text-green-500" : "text-red-500"}>
+                                {ad.active ? "Active" : "Inactive"}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="border-amber-700/50 text-amber-400 hover:bg-amber-900/30"
+                            onClick={() => handleEditAd(ad)}
+                          >
+                            <Edit className="h-4 w-4 mr-1" />
+                            Edit
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="border-amber-700/50 text-amber-400 hover:bg-amber-900/30"
+                            onClick={() => handleDeleteAd(ad.id)}
+                          >
+                            <Trash2 className="h-4 w-4 mr-1" />
+                            Delete
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-center text-amber-300/70 py-8">
+                    {searchQuery ? `No ads found matching "${searchQuery}"` : "No ads available"}
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
+      </div>
     </div>
   )
 }
